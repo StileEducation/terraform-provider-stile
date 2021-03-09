@@ -21,3 +21,10 @@ Then, run the following command to initialize the workspace and apply the sample
 ```shell
 terraform init && terraform apply
 ```
+
+
+## Publishing to the Terraform registry:
+
+Follow instructions here for using "Using GoReleaser locally": https://www.terraform.io/docs/registry/providers/publishing.html
+
+For the last step use `goreleaser release --config=config.yaml --rm-dist` to use the config.yaml config file. We need the config file because we renamed the project from `terraform-provider-stile-manifest` to `terraform-provider-stile`.
