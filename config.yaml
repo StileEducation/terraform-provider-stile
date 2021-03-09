@@ -12,9 +12,6 @@ archives:
   name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
 builds:
 - env:
-    # goreleaser does not work with CGO, it could also complicate
-    # usage by users in CI/CD systems like Terraform Cloud where
-    # they are unable to install libraries.
     - CGO_ENABLED=0
   mod_timestamp: '{{ .CommitTimestamp }}'
   flags:
@@ -35,3 +32,13 @@ builds:
     - goos: darwin
       goarch: '386'
   binary: '{{ .ProjectName }}_v{{ .Version }}'
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
