@@ -4,3 +4,6 @@ release:
     owner: StileEducation
     name: terraform-provider-stile
   name_template: '{{.Tag}}'
+checksum:
+  name_template: '{{ .ProjectName }}_{{ .Version }}_SHA256SUMS'
+  algorithm: sha256
