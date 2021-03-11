@@ -87,7 +87,7 @@ func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline stri
 			Severity: diag.Error,
 			Summary:  "Unable to find list buildkite artifacts.",
 			Detail: fmt.Sprintf(
-				"Attempted to read BFP Build %s. This can mean the artifact does not exist or your token has insufficient permission to access it.",
+				"Attempted to read BFP Build %s. This can mean the artifact does not exist or your Buildkite API token has insufficient permission to access it.",
 				buildNumber,
 			),
 		})
