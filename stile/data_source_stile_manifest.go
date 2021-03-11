@@ -67,7 +67,7 @@ func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline stri
 	config, err := buildkite.NewTokenConfig(apiToken, true)
 
 	if err != nil {
-		log.Fatalf("client config failed: %s", err)
+		log.Printf("client config failed: %s", err)
 
 		diags = append(diags, diag.Diagnostic{
 			Severity: diag.Error,
@@ -86,10 +86,13 @@ func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline stri
 		diags = append(diags, diag.Diagnostic{
 			Severity: diag.Error,
 			Summary:  "Unable to find list buildkite artifacts.",
-			Detail:   fmt.Sprintf("Attempted to read BFP Build %s", buildNumber),
+			Detail: fmt.Sprintf(
+				"Attempted to read BFP Build %s. This can mean the artifact does not exist or your Buildkite API token has insufficient permission to access it.",
+				buildNumber,
+			),
 		})
 
-		log.Fatalf("list artifacts failed: %s", err)
+		log.Printf("list artifacts failed: %s", err)
 
 		return nil, diags
 	}
@@ -99,7 +102,14 @@ func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline stri
 			data, err := json.MarshalIndent(artifact, "", "\t")
 
 			if err != nil {
-				log.Fatalf("json encode failed: %s", err)
+				diags = append(diags, diag.Diagnostic{
+					Severity: diag.Error,
+					Summary:  "JSON enacode failed",
+					Detail:   fmt.Sprint(err),
+				})
+
+				log.Printf("json encode failed: %s", err)
+				return nil, diags
 			}
 
 			fmt.Fprintf(os.Stdout, "%s\n", string(data))
@@ -113,7 +123,7 @@ func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline stri
 					Detail:   fmt.Sprintf("DownloadArtifactByURL failed: %s", err),
 				})
 
-				log.Fatalf("DownloadArtifactByURL failed: %s", err)
+				log.Printf("DownloadArtifactByURL failed: %s", err)
 
 				return &buf, diags
 			}
@@ -164,7 +174,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 	}
 	h := sha256.New()
 	if _, err := io.Copy(h, tee); err != nil {
-		log.Fatal(err)
+		return diag.FromErr(err)
 	}
 
 	sum := h.Sum(nil)
