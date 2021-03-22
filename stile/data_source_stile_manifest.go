@@ -132,6 +132,13 @@ func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline stri
 		}
 	}
 
+	diags = append(diags, diag.Diagnostic{
+		Severity: diag.Error,
+		Summary: "Could not find manifest",
+		Detail: fmt.Sprintf("Could not find Stile Manifest artifact named %s for build number %s in Buildkite", artifactName, buildNumber),
+	})
+	log.Printf("Could not find manifest %s for build number %s", artifactName, buildNumber)
+
 	return nil, diags
 }
 
