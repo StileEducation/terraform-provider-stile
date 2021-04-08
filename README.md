@@ -25,6 +25,18 @@ terraform init && terraform apply
 
 ## Publishing to the Terraform registry:
 
-Follow instructions here for using "Using GoReleaser locally": https://www.terraform.io/docs/registry/providers/publishing.html
-
-For the last step use `goreleaser release --config=config.yaml --rm-dist` to use the config.yaml config file. We need the config file because we renamed the project from `terraform-provider-stile-manifest` to `terraform-provider-stile`.
+- Tag the release (e.g. `git tag v0.0.11`)
+- Push the tags to GitHub (`git push --tags`)
+- Make sure you have the GPG key imported using `gpg --import <key file>`. To check this worked properly you should see the key in:
+  - `gpg --list-keys`
+  - `gpg --list-secret-keys`
+- Follow instructions here for using "Using GoReleaser locally":
+https://www.terraform.io/docs/registry/providers/publishing.html For
+the last step use `goreleaser release --config=config.yaml --rm-dist`
+to use the config.yaml config file. We need the config file because we
+renamed the project from `terraform-provider-stile-manifest` to
+`terraform-provider-stile`.
+	- Running `goreleaser` the first time will fail, rerun that
+      command that it fails on which will be something like: `gpg --local-user <fingerprint> --output dist/terraform-provider-stile_<version>_SHA256SUMS.sig --detach-sign dist/terraform-provider-stile_<version>_SHA256SUMS`.
+	  You'll be prompted to enter the key's password.
+	- Rerun `goreleaser` and the new version will be deployed!
