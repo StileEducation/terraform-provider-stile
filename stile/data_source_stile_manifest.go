@@ -80,62 +80,82 @@ func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline stri
 
 	client := buildkite.NewClient(config.Client())
 
-	artifacts, _, err := client.Artifacts.ListByBuild(org, pipeline, buildNumber, nil)
+	// This is a pointer, so for ease of use we assign it with the default
+	// values for the structure. If we used the, the perhaps more
+	// idiomatic, `var` then `opts` would be nil and we'd have to special
+	// case setting `Page` for the first iteration of the loop where it
+	// would be `nil`
+	opts := &buildkite.ArtifactListOptions{ListOptions: buildkite.ListOptions{}}
 
-	if err != nil {
-		diags = append(diags, diag.Diagnostic{
-			Severity: diag.Error,
-			Summary:  "Unable to find list buildkite artifacts.",
-			Detail: fmt.Sprintf(
-				"Attempted to read BFP Build %s. This can mean the artifact does not exist or your Buildkite API token has insufficient permission to access it.",
-				buildNumber,
-			),
-		})
+	// Buildkite's Artifacts API is paginated so we need to go through each
+	// page until we find the artifact we're looking for, or run out of
+	// pages.
+	for {
+		artifacts, response, err := client.Artifacts.ListByBuild(org, pipeline, buildNumber, opts)
 
-		log.Printf("list artifacts failed: %s", err)
+		if err != nil {
+			diags = append(diags, diag.Diagnostic{
+				Severity: diag.Error,
+				Summary:  "Unable to find list buildkite artifacts.",
+				Detail: fmt.Sprintf(
+					"Attempted to read BFP Build %s. This can mean the artifact does not exist or your Buildkite API token has insufficient permission to access it.",
+					buildNumber,
+				),
+			})
 
-		return nil, diags
-	}
+			log.Printf("list artifacts failed: %s", err)
 
-	for _, artifact := range artifacts {
-		if artifactName == "" {
-			data, err := json.MarshalIndent(artifact, "", "\t")
+			return nil, diags
+		}
 
-			if err != nil {
-				diags = append(diags, diag.Diagnostic{
-					Severity: diag.Error,
-					Summary:  "JSON enacode failed",
-					Detail:   fmt.Sprint(err),
-				})
+		for _, artifact := range artifacts {
+			if artifactName == "" {
+				data, err := json.MarshalIndent(artifact, "", "\t")
 
-				log.Printf("json encode failed: %s", err)
-				return nil, diags
-			}
+				if err != nil {
+					diags = append(diags, diag.Diagnostic{
+						Severity: diag.Error,
+						Summary:  "JSON enacode failed",
+						Detail:   fmt.Sprint(err),
+					})
 
-			fmt.Fprintf(os.Stdout, "%s\n", string(data))
-		} else if artifactName == *artifact.Filename || artifactName == *artifact.ID {
-			var buf bytes.Buffer
-			_, err := client.Artifacts.DownloadArtifactByURL(*artifact.DownloadURL, &buf)
-			if err != nil {
-				diags = append(diags, diag.Diagnostic{
-					Severity: diag.Error,
-					Summary:  "Unable to find list buildkite artifacts.",
-					Detail:   fmt.Sprintf("DownloadArtifactByURL failed: %s", err),
-				})
+					log.Printf("json encode failed: %s", err)
+					return nil, diags
+				}
 
-				log.Printf("DownloadArtifactByURL failed: %s", err)
+				fmt.Fprintf(os.Stdout, "%s\n", string(data))
+			} else if artifactName == *artifact.Filename || artifactName == *artifact.ID {
+				var buf bytes.Buffer
+				_, err := client.Artifacts.DownloadArtifactByURL(*artifact.DownloadURL, &buf)
+				if err != nil {
+					diags = append(diags, diag.Diagnostic{
+						Severity: diag.Error,
+						Summary:  "Unable to find list buildkite artifacts.",
+						Detail:   fmt.Sprintf("DownloadArtifactByURL failed: %s", err),
+					})
+
+					log.Printf("DownloadArtifactByURL failed: %s", err)
+
+					return &buf, diags
+				}
 
 				return &buf, diags
 			}
-
-			return &buf, diags
 		}
+
+		// This indicates that there are no more pages to look at and
+		// we haven't found the manifest we're looking for.
+		if response.NextPage == 0 {
+			break
+		}
+
+		opts.Page = response.NextPage
 	}
 
 	diags = append(diags, diag.Diagnostic{
 		Severity: diag.Error,
-		Summary: "Could not find manifest",
-		Detail: fmt.Sprintf("Could not find Stile Manifest artifact named %s for build number %s in Buildkite", artifactName, buildNumber),
+		Summary:  "Could not find manifest",
+		Detail:   fmt.Sprintf("Could not find Stile Manifest artifact named %s for build number %s in Buildkite", artifactName, buildNumber),
 	})
 	log.Printf("Could not find manifest %s for build number %s", artifactName, buildNumber)
 
