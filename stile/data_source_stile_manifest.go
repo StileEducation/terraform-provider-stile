@@ -43,12 +43,10 @@ func dataStileManifest() *schema.Resource {
 				Computed: false,
 			},
 			"fallback_manifest": &schema.Schema{
-				Type: schema.TypeMap,
+				Type: schema.TypeString,
 				Optional: true,
+				Required: false,
 				Computed: false,
-				Elem: &schema.Schema {
-					Type: schema.TypeString,
-				},
 			},
 			"name": &schema.Schema{
 				Type:     schema.TypeString,
@@ -141,10 +139,7 @@ func getBuildkiteArtifact(apiToken string, artifactName string, buildNumber stri
 		opts.Page = response.NextPage
 	}
 	log.Printf("Could not find manifest %s for build number %s in %s/%s", artifactName, buildNumber, org, pipeline)
-	return nil, diagnosticError{
-		summary: "Could not find manifest",
-		detail:  fmt.Sprintf("Could not find manifest %s for build number %s in %s/%s", artifactName, buildNumber, org, pipeline),
-	}
+	return nil, nil
 }
 
 func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
@@ -163,8 +158,11 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 		return diags
 	}
 
-
-	artifact, err := getBuildkiteArtifact(apiToken, d.Get("manifest_name").(string), strconv.Itoa(d.Get("bfp_build_number").(int)), "big-friendly-pipeline", "stile-education")
+	manifestName := d.Get("manifest_name").(string)
+	bfpBuildNumber := strconv.Itoa(d.Get("bfp_build_number").(int))
+	org := "stile-education"
+	pipeline := "big-friendly-pipeline"
+	artifact, err := getBuildkiteArtifact(apiToken, manifestName, bfpBuildNumber, pipeline, org)
 
 	// Do our best to give a structured diagnostic if it's one of our
 	// errors. If it's just been bubbled up from a library just put it
@@ -183,6 +181,50 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 		})
 		return diags
 	}
+
+	if artifact == nil {
+		if fallbackArtifact, ok := d.GetOk("fallback_manifest"); ok {
+			if noFallback, ok := os.LookupEnv("STILE_MANIFEST_NO_FALLBACK"); ok {
+				noFallback, err := strconv.ParseBool(noFallback)
+				if err != nil {
+					diags = append(diags, diag.Diagnostic{
+						Severity: diag.Error,
+						Summary:  "Invalid valid for environment variable STILE_MANIFEST_NO_FALLBACK",
+						Detail:   fmt.Sprintf("This value is used to determine whether you having a fallback manifest is allowed. It must be a valid boolean value (e.g. 0, 1, true, false, etc.): %v", err),
+					})
+					return diags
+				}
+				if noFallback {
+					diags = append(diags, diag.Diagnostic{
+						Severity: diag.Error,
+						Summary:  fmt.Sprintf("Manifest %s not found for build %s in %s/%s", manifestName, bfpBuildNumber, org, pipeline),
+						Detail:   "This may be beause the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist. A fallback was specified via fallback_manifest but fallback was disabled via the STILE_MANIFEST_NO_FALLBACK environment variable.",
+					})
+					return diags
+				}
+				// If we haven't disabled fallback, just warn that
+				// we're falling back.
+				diags = append(diags, diag.Diagnostic{
+					Severity:      diag.Warning,
+					Summary:  fmt.Sprintf("Manifest %s not found for build %s in %s/%s, using fallback", manifestName, bfpBuildNumber, org, pipeline),
+					Detail:   "This may be beause the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist. However, a fallback was specifie.",
+				})
+			}
+
+			var buf bytes.Buffer
+			if _, err := buf.WriteString(fallbackArtifact.(string)); err != nil {
+				diags = append(diags, diag.FromErr(err)...)
+			}
+			artifact = &buf
+		} else {
+			diags = append(diags, diag.Diagnostic{
+				Severity: diag.Error,
+				Summary:  fmt.Sprintf("Manifest %s not found for build %s in %s/%s", manifestName, bfpBuildNumber, org, pipeline),
+				Detail:   "This may be beause the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist.",
+			})
+		}
+	}
+
 	var buf bytes.Buffer
 	tee := io.TeeReader(artifact, &buf)
 
