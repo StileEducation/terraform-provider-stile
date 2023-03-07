@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +16,15 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
+
+type diagnosticError struct {
+	summary string
+	detail  string
+}
+
+func (e diagnosticError) Error() string {
+	return fmt.Sprintf("%s: %v", e.summary, e.detail)
+}
 
 func dataStileManifest() *schema.Resource {
 	return &schema.Resource{
@@ -31,6 +41,14 @@ func dataStileManifest() *schema.Resource {
 				Required: true,
 				Optional: false,
 				Computed: false,
+			},
+			"fallback_manifest": &schema.Schema{
+				Type: schema.TypeMap,
+				Optional: true,
+				Computed: false,
+				Elem: &schema.Schema {
+					Type: schema.TypeString,
+				},
 			},
 			"name": &schema.Schema{
 				Type:     schema.TypeString,
@@ -51,31 +69,15 @@ func dataStileManifest() *schema.Resource {
 	}
 }
 
-func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline string, org string, diags diag.Diagnostics) (io.Reader, diag.Diagnostics) {
-	apiToken, present := os.LookupEnv("BUILDKITE_READ_API_TOKEN")
-
-	if present == false {
-		diags = append(diags, diag.Diagnostic{
-			Severity: diag.Error,
-			Summary:  "Unable to find BUILDKITE_READ_API_TOKEN environment variable.",
-			Detail:   "BUILDKITE_READ_API_TOKEN not present in environment",
-		})
-
-		return nil, diags
-	}
-
+func getBuildkiteArtifact(apiToken string, artifactName string, buildNumber string, pipeline string, org string) (io.Reader, error) {
 	config, err := buildkite.NewTokenConfig(apiToken, true)
 
 	if err != nil {
 		log.Printf("client config failed: %s", err)
-
-		diags = append(diags, diag.Diagnostic{
-			Severity: diag.Error,
-			Summary:  "Unable to configure Buildkite Client with BUILDKITE_READ_API_TOKEN.",
-			Detail:   fmt.Sprintf("client config failed: %s", err),
-		})
-
-		return nil, diags
+		return nil, diagnosticError{
+			summary: "Unable to configure Buildkite Client with BUILDKITE_READ_API_TOKEN",
+			detail:  fmt.Sprintf("client config failed: %v", err),
+		}
 	}
 
 	client := buildkite.NewClient(config.Client())
@@ -94,52 +96,39 @@ func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline stri
 		artifacts, response, err := client.Artifacts.ListByBuild(org, pipeline, buildNumber, opts)
 
 		if err != nil {
-			diags = append(diags, diag.Diagnostic{
-				Severity: diag.Error,
-				Summary:  "Unable to find list buildkite artifacts.",
-				Detail: fmt.Sprintf(
-					"Attempted to read BFP Build %s. This can mean the artifact does not exist or your Buildkite API token has insufficient permission to access it.",
-					buildNumber,
-				),
-			})
-
 			log.Printf("list artifacts failed: %s", err)
-
-			return nil, diags
+			return nil, diagnosticError{
+				summary: fmt.Sprintf("Unable to list buildkite artifacts for build %s in pipeline %s/%s", buildNumber, org, pipeline),
+				detail:  fmt.Sprintf(
+					"This can mean the artifact does not exist or your Buildkite API token has insufficient permission to access it: %v",
+					err,
+				),
+			}
 		}
 
 		for _, artifact := range artifacts {
 			if artifactName == "" {
 				data, err := json.MarshalIndent(artifact, "", "\t")
-
 				if err != nil {
-					diags = append(diags, diag.Diagnostic{
-						Severity: diag.Error,
-						Summary:  "JSON enacode failed",
-						Detail:   fmt.Sprint(err),
-					})
-
 					log.Printf("json encode failed: %s", err)
-					return nil, diags
+					return nil, diagnosticError{
+						summary: "Failed to encode artifact as JSON",
+						detail:  err.Error(),
+					}
 				}
-
 				fmt.Fprintf(os.Stdout, "%s\n", string(data))
 			} else if artifactName == *artifact.Filename || artifactName == *artifact.ID {
 				var buf bytes.Buffer
 				_, err := client.Artifacts.DownloadArtifactByURL(*artifact.DownloadURL, &buf)
 				if err != nil {
-					diags = append(diags, diag.Diagnostic{
-						Severity: diag.Error,
-						Summary:  "Unable to find list buildkite artifacts.",
-						Detail:   fmt.Sprintf("DownloadArtifactByURL failed: %s", err),
-					})
-
 					log.Printf("DownloadArtifactByURL failed: %s", err)
-
-					return &buf, diags
+					return nil, diagnosticError{
+						summary: fmt.Sprintf("Unabled to download artifact at URL %s", err),
+						detail:  fmt.Sprintf("DownloadArtifactByURL failed: %s", err),
+					}
 				}
 
-				return &buf, diags
+				return &buf, nil
 			}
 		}
 
@@ -151,31 +140,54 @@ func getBuildkiteArtifact(artifactName string, buildNumber string, pipeline stri
 
 		opts.Page = response.NextPage
 	}
-
-	diags = append(diags, diag.Diagnostic{
-		Severity: diag.Error,
-		Summary:  "Could not find manifest",
-		Detail:   fmt.Sprintf("Could not find Stile Manifest artifact named %s for build number %s in Buildkite", artifactName, buildNumber),
-	})
-	log.Printf("Could not find manifest %s for build number %s", artifactName, buildNumber)
-
-	return nil, diags
+	log.Printf("Could not find manifest %s for build number %s in %s/%s", artifactName, buildNumber, org, pipeline)
+	return nil, diagnosticError{
+		summary: "Could not find manifest",
+		detail:  fmt.Sprintf("Could not find manifest %s for build number %s in %s/%s", artifactName, buildNumber, org, pipeline),
+	}
 }
 
 func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	// Warning or errors can be collected in a slice type
 	var diags diag.Diagnostics
 
-	artifact, diags := getBuildkiteArtifact(d.Get("manifest_name").(string), strconv.Itoa(d.Get("bfp_build_number").(int)), "big-friendly-pipeline", "stile-education", diags)
-	var buf bytes.Buffer
-	tee := io.TeeReader(artifact, &buf)
+	apiToken, present := os.LookupEnv("BUILDKITE_READ_API_TOKEN")
 
-	if diags != nil {
+	if present == false {
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  "Unable to find BUILDKITE_READ_API_TOKEN environment variable.",
+			Detail:   "BUILDKITE_READ_API_TOKEN not present in environment",
+		})
+
 		return diags
 	}
 
+
+	artifact, err := getBuildkiteArtifact(apiToken, d.Get("manifest_name").(string), strconv.Itoa(d.Get("bfp_build_number").(int)), "big-friendly-pipeline", "stile-education")
+
+	// Do our best to give a structured diagnostic if it's one of our
+	// errors. If it's just been bubbled up from a library just put it
+	// all in the summary.
+	var diagError diagnosticError
+	if errors.As(err, &diagError) {
+		diags = append(diags, diag.Diagnostic{
+			Severity:      diag.Error,
+			Summary:       diagError.summary,
+			Detail:        diagError.detail,
+		})
+	} else if err != nil {
+		diags = append(diags, diag.Diagnostic{
+			Severity: diag.Error,
+			Summary:  fmt.Sprintf("Failed to get Buildkite artifact: %v", err),
+		})
+		return diags
+	}
+	var buf bytes.Buffer
+	tee := io.TeeReader(artifact, &buf)
+
 	manifest := map[string]interface{}{}
-	err := json.NewDecoder(artifact).Decode(&manifest)
+	err = json.NewDecoder(artifact).Decode(&manifest)
 	if err != nil {
 		return diag.FromErr(err)
 	}
