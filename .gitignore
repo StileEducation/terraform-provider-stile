@@ -37,3 +37,6 @@ override.tf.json
 .terraformrc
 terraform.rc
 terraform
+
+# Ignore the binary created by `make build`
+terraform-provider-stile
