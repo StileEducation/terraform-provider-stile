@@ -63,6 +63,15 @@ func dataStileManifest() *schema.Resource {
 					Type: schema.TypeString,
 				},
 			},
+			// This value is needed to keep terraform application's
+			// idempotent. If a manifest becomes available after we've
+			// applied the terraform then subsequent applications of
+			// the terraform would say there is a diff when we don't
+			// want them to.
+			"used_fallback_manifest": &schema.Schema{
+				Type: schema.TypeBool,
+				Computed: true,
+			},
 		},
 	}
 }
@@ -162,26 +171,48 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 	bfpBuildNumber := strconv.Itoa(d.Get("bfp_build_number").(int))
 	org := "stile-education"
 	pipeline := "big-friendly-pipeline"
-	artifact, err := getBuildkiteArtifact(apiToken, manifestName, bfpBuildNumber, pipeline, org)
 
-	// Do our best to give a structured diagnostic if it's one of our
-	// errors. If it's just been bubbled up from a library just put it
-	// all in the summary.
-	var diagError diagnosticError
-	if errors.As(err, &diagError) {
-		diags = append(diags, diag.Diagnostic{
-			Severity:      diag.Error,
-			Summary:       diagError.summary,
-			Detail:        diagError.detail,
-		})
-	} else if err != nil {
-		diags = append(diags, diag.Diagnostic{
-			Severity: diag.Error,
-			Summary:  fmt.Sprintf("Failed to get Buildkite artifact: %v", err),
-		})
-		return diags
+	var artifact io.Reader
+
+	// Using `GetChange`, rather than the usual `Get`, is needed
+	// because data resources don't get given the terraform state in
+	// the `ResourceData` struct they're called with. This means that
+	// `used_fallback_manifest` would always be false. They are,
+	// however, given the terraform diff which we can get the
+	// `used_fallback_manifest` value from if in a previous run we used
+	// the fallback manifest.
+	_, usedFallbackManifest := d.GetChange("used_fallback_manifest")
+
+	// Only get the manifest artifact from buildkite if we haven't
+	// previously used the fallback manifest. It would just be a
+	// thrown away next anyway.
+	if !usedFallbackManifest.(bool) {
+		var err error
+		artifact, err = getBuildkiteArtifact(apiToken, manifestName, bfpBuildNumber, pipeline, org)
+
+		// Do our best to give a structured diagnostic if it's one of our
+		// errors. If it's just been bubbled up from a library just put it
+		// all in the summary.
+		var diagError diagnosticError
+		if errors.As(err, &diagError) {
+			diags = append(diags, diag.Diagnostic{
+				Severity: diag.Error,
+				Summary:  diagError.summary,
+				Detail:   diagError.detail,
+			})
+		} else if err != nil {
+			diags = append(diags, diag.Diagnostic{
+				Severity: diag.Error,
+				Summary:  fmt.Sprintf("Failed to get Buildkite artifact: %v", err),
+			})
+			return diags
+		}
 	}
 
+	// This will be nil in two cases:
+	//
+	// 1. On the first application if we can't find the manifest
+	// 2. On subsequent applications if we used the fallback manifest last time.
 	if artifact == nil {
 		if fallbackArtifact, ok := d.GetOk("fallback_manifest"); ok {
 			if noFallback, ok := os.LookupEnv("STILE_MANIFEST_NO_FALLBACK"); ok {
@@ -216,6 +247,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 				diags = append(diags, diag.FromErr(err)...)
 			}
 			artifact = &buf
+			d.Set("used_fallback_manifest", true)
 		} else {
 			diags = append(diags, diag.Diagnostic{
 				Severity: diag.Error,
