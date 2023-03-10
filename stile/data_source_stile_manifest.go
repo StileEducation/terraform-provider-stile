@@ -43,7 +43,7 @@ func dataStileManifest() *schema.Resource {
 				Computed: false,
 			},
 			"fallback_manifest": &schema.Schema{
-				Type: schema.TypeString,
+				Type:     schema.TypeString,
 				Optional: true,
 				Required: false,
 				Computed: false,
@@ -69,7 +69,7 @@ func dataStileManifest() *schema.Resource {
 			// the terraform would say there is a diff when we don't
 			// want them to.
 			"used_fallback_manifest": &schema.Schema{
-				Type: schema.TypeBool,
+				Type:     schema.TypeBool,
 				Computed: true,
 			},
 		},
@@ -106,7 +106,7 @@ func getBuildkiteArtifact(apiToken string, artifactName string, buildNumber stri
 			log.Printf("list artifacts failed: %s", err)
 			return nil, diagnosticError{
 				summary: fmt.Sprintf("Unable to list buildkite artifacts for build %s in pipeline %s/%s", buildNumber, org, pipeline),
-				detail:  fmt.Sprintf(
+				detail: fmt.Sprintf(
 					"This can mean the artifact does not exist or your Buildkite API token has insufficient permission to access it: %v",
 					err,
 				),
@@ -236,7 +236,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 				// If we haven't disabled fallback, just warn that
 				// we're falling back.
 				diags = append(diags, diag.Diagnostic{
-					Severity:      diag.Warning,
+					Severity: diag.Warning,
 					Summary:  fmt.Sprintf("Manifest %s not found for build %s in %s/%s, using fallback", manifestName, bfpBuildNumber, org, pipeline),
 					Detail:   "This may be beause the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist. However, a fallback was specifie.",
 				})
