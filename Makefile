@@ -4,7 +4,7 @@ NAMESPACE=edu
 NAME=stile
 BINARY=terraform-provider-${NAME}
 VERSION=0.2
-OS_ARCH=darwin_amd64
+OS_ARCH=$(shell echo "$$(uname -s)_$$(uname -m)" | awk '{ print tolower($$0) }')
 
 default: install
 

@@ -5,7 +5,7 @@ This is an internal tool used by Stile Education for fetching "manifests" an int
 Run the following command to build the provider
 
 ```shell
-go build -o terraform-provider-stile-manifest
+make build
 ```
 
 ## Test sample configuration
