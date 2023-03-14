@@ -261,7 +261,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 	tee := io.TeeReader(artifact, &buf)
 
 	manifest := map[string]interface{}{}
-	err = json.NewDecoder(artifact).Decode(&manifest)
+	err := json.NewDecoder(artifact).Decode(&manifest)
 	if err != nil {
 		return diag.FromErr(err)
 	}
