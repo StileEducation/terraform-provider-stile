@@ -254,6 +254,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 				Summary:  fmt.Sprintf("Manifest %s not found for build %s in %s/%s", manifestName, bfpBuildNumber, org, pipeline),
 				Detail:   "This may be beause the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist.",
 			})
+			return diags
 		}
 	}
 
