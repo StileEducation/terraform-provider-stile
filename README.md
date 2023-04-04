@@ -30,6 +30,11 @@ terraform init && terraform apply
 - Make sure you have the GPG key imported using `gpg --import <key file>`. To check this worked properly you should see the key in:
   - `gpg --list-keys`
   - `gpg --list-secret-keys`
+- Get a GitHub token with `repo:public_repo` permission and set the
+  env var `GITHUB_TOKEN` to that value
+- Get the GPG key fingerprint:
+  - `gpg --list-secret-keys` and copy it from the output
+  - Set to the `GPG_FINGERPRINT` env var
 - Follow instructions here for using "Using GoReleaser locally":
 https://www.terraform.io/docs/registry/providers/publishing.html For
 the last step use `goreleaser release --config=config.yaml --rm-dist`
