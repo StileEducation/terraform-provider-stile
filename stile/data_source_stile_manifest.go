@@ -130,8 +130,8 @@ func getBuildkiteArtifact(apiToken string, artifactName string, buildNumber stri
 				if err != nil {
 					log.Printf("DownloadArtifactByURL failed: %s", err)
 					return nil, diagnosticError{
-						summary: fmt.Sprintf("Unabled to download artifact at URL %s", err),
-						detail:  fmt.Sprintf("DownloadArtifactByURL failed: %s", err),
+						summary: fmt.Sprintf("Unable to download artifact at URL %s", err),
+						detail:  fmt.Sprintf("DownloadArtifactByURL failed: %s\nAre you on the VPN?", err),
 					}
 				}
 
