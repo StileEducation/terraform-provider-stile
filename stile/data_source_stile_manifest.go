@@ -26,37 +26,60 @@ func (e diagnosticError) Error() string {
 	return fmt.Sprintf("%s: %v", e.summary, e.detail)
 }
 
+// NOTE: Provider Parameterized by Architecture
+//
+// This provider accepts an "architecture" input which causes it to extract
+// a different subset of the information in the manifest JSON. Another
+// approach could be to return the whole of the JSON structure back to
+// Terraform and let the modules decide which parts are relevant.
+//
+// This was attempted but proved difficult because of the nested-map
+// structure of the JSON. Accomplishing this should be easier on the newer
+// provider-API: `terraform-plugin-framework`. Future work might migrate
+// this provider to that new API.
+
 func dataStileManifest() *schema.Resource {
 	return &schema.Resource{
 		ReadContext: dataStileManifestRead,
 		Schema: map[string]*schema.Schema{
-			"manifest_name": &schema.Schema{
+			"manifest_name": {
 				Type:     schema.TypeString,
 				Required: true,
 				Optional: false,
 				Computed: false,
 			},
-			"bfp_build_number": &schema.Schema{
+			"bfp_build_number": {
 				Type:     schema.TypeInt,
 				Required: true,
 				Optional: false,
 				Computed: false,
 			},
-			"fallback_manifest": &schema.Schema{
+			"fallback_manifest": {
 				Type:     schema.TypeString,
 				Optional: true,
 				Required: false,
 				Computed: false,
 			},
-			"name": &schema.Schema{
+			// Which architecture should we return images/AMIs for? The
+			// exact format for this string is unspecified and simply
+			// corresponds with whatever the manifest provider has placed
+			// in the manifest. Eg: at the time of writing we have
+			// "IntelLinux" and "GravitonLinux".
+			"architecture": {
+				Type:     schema.TypeString,
+				Computed: true,
+				Optional: true,
+				Required: false,
+			},
+			"name": {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
-			"amis": &schema.Schema{
+			"amis": {
 				Type:     schema.TypeMap,
 				Computed: true,
 			},
-			"service_versions": &schema.Schema{
+			"service_versions": {
 				Type:     schema.TypeMap,
 				Computed: true,
 				Elem: &schema.Schema{
@@ -68,7 +91,7 @@ func dataStileManifest() *schema.Resource {
 			// applied the terraform then subsequent applications of
 			// the terraform would say there is a diff when we don't
 			// want them to.
-			"used_fallback_manifest": &schema.Schema{
+			"used_fallback_manifest": {
 				Type:     schema.TypeBool,
 				Computed: true,
 			},
@@ -267,8 +290,28 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 		return diag.FromErr(err)
 	}
 
-	if err := d.Set("amis", manifest["amis"]); err != nil {
-		return diag.FromErr(err)
+	var arch = d.Get("architecture").(string)
+	if arch == "" {
+		// No target architecture was specified by the user so just grab
+		// the top-level fields which don't commit to a specific
+		// architecture.
+		if err := d.Set("amis", manifest["amis"]); err != nil {
+			return diag.FromErr(err)
+		}
+		if err := d.Set("service_versions", manifest["service_versions"]); err != nil {
+			return diag.FromErr(err)
+		}
+	} else {
+		items, ok := manifest[arch].(map[string]interface{})
+		if !ok {
+			return diag.Errorf("Entry for 'architecture' in the manifest didn't have expected type.")
+		}
+		if err := d.Set("amis", items["amis"]); err != nil {
+			return diag.FromErr(err)
+		}
+		if err := d.Set("service_versions", items["service_versions"]); err != nil {
+			return diag.FromErr(err)
+		}
 	}
 
 	if err := d.Set("bfp_build_number", d.Get("bfp_build_number").(int)); err != nil {
@@ -283,9 +326,6 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 		return diag.FromErr(err)
 	}
 
-	if err := d.Set("service_versions", manifest["service_versions"]); err != nil {
-		return diag.FromErr(err)
-	}
 	h := sha256.New()
 	if _, err := io.Copy(h, tee); err != nil {
 		return diag.FromErr(err)

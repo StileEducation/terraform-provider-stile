@@ -45,3 +45,27 @@ renamed the project from `terraform-provider-stile-manifest` to
       command that it fails on which will be something like: `gpg --local-user <fingerprint> --output dist/terraform-provider-stile_<version>_SHA256SUMS.sig --detach-sign dist/terraform-provider-stile_<version>_SHA256SUMS`.
 	  You'll be prompted to enter the key's password.
 	- Rerun `goreleaser` and the new version will be deployed!
+
+
+## Local dev
+
+You can build and test your changes to the provider like so:
+
+* build the provider binary with `go build`
+
+* write a Terraform conf file, eg: `~/.terraform.rc`, like so
+  ```
+  provider_installation {
+    dev_overrides {
+      "registry.terraform.io/StileEducation/stile" = "/path/to/dir/that/contains/provider/project"
+    }
+    direct {}
+  }
+  ```
+
+* export an env var to use the conf file:
+  ```
+  export TF_CLI_CONFIG_FILE=~/.terraform.rc
+  ```
+
+* run Terraform commands like normal
