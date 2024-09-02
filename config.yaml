@@ -1,3 +1,5 @@
+# See docs: https://goreleaser.com
+version: 2
 project_name: terraform-provider-stile
 release:
   github:
@@ -32,13 +34,3 @@ builds:
     - goos: darwin
       goarch: '386'
   binary: '{{ .ProjectName }}_v{{ .Version }}'
-signs:
-  - artifacts: checksum
-    args:
-      - "--batch"
-      - "--local-user"
-      - "{{ .Env.GPG_FINGERPRINT }}"
-      - "--output"
-      - "${signature}"
-      - "--detach-sign"
-      - "${artifact}"
