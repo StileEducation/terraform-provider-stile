@@ -26,25 +26,25 @@ terraform init && terraform apply
 ## Publishing to the Terraform registry:
 
 - Tag the release (e.g. `git tag v0.0.11`)
+
 - Push the tags to GitHub (`git push --tags`)
-- Make sure you have the GPG key imported using `gpg --import <key file>`. To check this worked properly you should see the key in:
-  - `gpg --list-keys`
-  - `gpg --list-secret-keys`
+
+- Import the GPG key that will be used to sign the release binaries: `gpg --import <key file>`
+  Check it worked with: `gpg --list-keys`
+
 - Get a GitHub token with `repo:public_repo` permission and set the
-  env var `GITHUB_TOKEN` to that value
-- Get the GPG key fingerprint:
-  - `gpg --list-secret-keys` and copy it from the output
-  - Set to the `GPG_FINGERPRINT` env var
-- Follow instructions here for using "Using GoReleaser locally":
-https://www.terraform.io/docs/registry/providers/publishing.html For
-the last step use `goreleaser release --config=config.yaml --rm-dist`
-to use the config.yaml config file. We need the config file because we
-renamed the project from `terraform-provider-stile-manifest` to
-`terraform-provider-stile`.
-	- Running `goreleaser` the first time will fail, rerun that
-      command that it fails on which will be something like: `gpg --local-user <fingerprint> --output dist/terraform-provider-stile_<version>_SHA256SUMS.sig --detach-sign dist/terraform-provider-stile_<version>_SHA256SUMS`.
-	  You'll be prompted to enter the key's password.
-	- Rerun `goreleaser` and the new version will be deployed!
+  env var `GITHUB_TOKEN` to that value.
+
+- Sign a random file in order to cache the GPG key passphrase, eg:
+  `gpg --armor --detach-sign config.yaml`
+  (goreleaser doesn't support keys with passphrases, so we need to sign a
+  random file so that we can input the passphrase and prevent it being
+  interactively demanded.)
+
+- Clean the repo: `git clean -fxd`
+
+- Release! `goreleaser release --config config.yaml`
+
 
 
 ## Local dev
