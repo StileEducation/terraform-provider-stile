@@ -1,4 +1,11 @@
-# Visit https://goreleaser.com for documentation on how to customize this behavior.
+# This file originates from
+# https://github.com/hashicorp/terraform-provider-scaffolding-framework and
+# has been lightly customized. Before you go deleting bits that look
+# redundant, go have a look there and see how it compares with the source.
+#
+# This is a config file for goreleaser which is entirely separate from
+# Hashicorp/Terraform. Doc on what everything means is avilable here:
+# https://goreleaser.com.
 version: 2
 builds:
 - env:
