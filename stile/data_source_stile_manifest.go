@@ -302,10 +302,30 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 			return diag.FromErr(err)
 		}
 	} else {
-		items, ok := manifest[arch].(map[string]interface{})
+		archData, ok := manifest[arch]
 		if !ok {
-			return diag.Errorf("Entry for 'architecture' in the manifest didn't have expected type.")
+			diags = append(diags, diag.Diagnostic{
+				Severity: diag.Error,
+				Summary:  fmt.Sprintf("No entry for architecture %q in the manifest", arch),
+				Detail:   fmt.Sprintf("This is most likely due to the %q manifest not being of kind 'Manifest'. Add `output_kind: Manifest` to the product definition to fix this.", manifestName),
+			})
+			return diags
 		}
+
+		items, ok := archData.(map[string]interface{})
+		if !ok {
+			diags = append(diags, diag.Diagnostic{
+				Severity: diag.Error,
+				Summary: fmt.Sprintf(
+					"Entry for architecture %q in the manifest didn't have expected type `map[string]interface{}`, got `%T`",
+					arch,
+					archData,
+				),
+				Detail: "This is most likely due to the manifest being malformd. Check the manifest JSON in buildkite and fix the `create_untested_manifest` Rake task in buildkite/Rakefile is necessary.",
+			})
+			return diags
+		}
+
 		if err := d.Set("amis", items["amis"]); err != nil {
 			return diag.FromErr(err)
 		}
