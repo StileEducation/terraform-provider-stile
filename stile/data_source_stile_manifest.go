@@ -252,7 +252,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 					diags = append(diags, diag.Diagnostic{
 						Severity: diag.Error,
 						Summary:  fmt.Sprintf("Manifest %s not found for build %s in %s/%s", manifestName, bfpBuildNumber, org, pipeline),
-						Detail:   "This may be beause the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist. A fallback was specified via fallback_manifest but fallback was disabled via the STILE_MANIFEST_NO_FALLBACK environment variable.",
+						Detail:   "This may be because the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist. A fallback was specified via fallback_manifest but fallback was disabled via the STILE_MANIFEST_NO_FALLBACK environment variable.",
 					})
 					return diags
 				}
@@ -261,7 +261,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 				diags = append(diags, diag.Diagnostic{
 					Severity: diag.Warning,
 					Summary:  fmt.Sprintf("Manifest %s not found for build %s in %s/%s, using fallback", manifestName, bfpBuildNumber, org, pipeline),
-					Detail:   "This may be beause the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist. However, a fallback was specifie.",
+					Detail:   "This may be because the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist. However, a fallback was specifie.",
 				})
 			}
 
@@ -275,7 +275,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 			diags = append(diags, diag.Diagnostic{
 				Severity: diag.Error,
 				Summary:  fmt.Sprintf("Manifest %s not found for build %s in %s/%s", manifestName, bfpBuildNumber, org, pipeline),
-				Detail:   "This may be beause the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist.",
+				Detail:   "This may be because the build failed or it is on a branch that does not build the manifest. You can use fallback_manifest to specify a map of the manifest that should be used if the expected one does not exist.",
 			})
 			return diags
 		}
