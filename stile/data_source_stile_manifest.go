@@ -180,7 +180,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 
 	apiToken, present := os.LookupEnv("BUILDKITE_READ_API_TOKEN")
 
-	if present == false {
+	if !present {
 		diags = append(diags, diag.Diagnostic{
 			Severity: diag.Error,
 			Summary:  "Unable to find BUILDKITE_READ_API_TOKEN environment variable.",
