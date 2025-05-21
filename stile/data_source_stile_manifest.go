@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/buildkite/go-buildkite/v2/buildkite"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -211,7 +212,19 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 	// thrown away next anyway.
 	if !usedFallbackManifest.(bool) {
 		var err error
-		artifact, err = getBuildkiteArtifact(apiToken, manifestName, bfpBuildNumber, pipeline, org)
+		// A bit of retry. Don't add too much because it'll make legit
+		// failures take a really long time to surface. When Terraform
+		// is running this provider the user doesn't see any logs, so
+		// it will just appear that the provider is hanging and
+		// hanging and hanging...
+		for i := 0; i < 5; i++ {
+			artifact, err = getBuildkiteArtifact(apiToken, manifestName, bfpBuildNumber, pipeline, org)
+			if err == nil {
+				break
+			}
+			log.Printf("Getting manifest failed, trying again...")
+			time.Sleep(5 * time.Second)
+		}
 
 		// Do our best to give a structured diagnostic if it's one of our
 		// errors. If it's just been bubbled up from a library just put it
