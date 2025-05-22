@@ -1,4 +1,4 @@
-module terraform-provider-hashicups
+module terraform-provider-stile
 
 go 1.14
 
