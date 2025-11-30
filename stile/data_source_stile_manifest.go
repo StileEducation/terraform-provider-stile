@@ -9,10 +9,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/buildkite/go-buildkite/v2/buildkite"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -25,6 +29,120 @@ type diagnosticError struct {
 
 func (e diagnosticError) Error() string {
 	return fmt.Sprintf("%s: %v", e.summary, e.detail)
+}
+
+// s3Location represents a parsed S3 URL with bucket and key information.
+type s3Location struct {
+	Bucket string
+	Key    string
+	Region string
+}
+
+// parseS3URL attempts to parse a URL as an S3 URL. It supports:
+// - Virtual-hosted style: https://bucket.s3.region.amazonaws.com/key
+// - Virtual-hosted style (legacy): https://bucket.s3.amazonaws.com/key
+// - Path style: https://s3.region.amazonaws.com/bucket/key
+// - Path style (legacy): https://s3.amazonaws.com/bucket/key
+// Returns nil if the URL is not an S3 URL.
+func parseS3URL(rawURL string) *s3Location {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil
+	}
+
+	host := parsed.Host
+
+	// Check if this is an S3 URL
+	if !strings.Contains(host, "s3") || !strings.Contains(host, "amazonaws.com") {
+		return nil
+	}
+
+	// Virtual-hosted style: bucket.s3.region.amazonaws.com or bucket.s3.amazonaws.com
+	if strings.Contains(host, ".s3.") || strings.HasSuffix(host, ".s3.amazonaws.com") {
+		parts := strings.SplitN(host, ".s3.", 2)
+		if len(parts) != 2 {
+			return nil
+		}
+		bucket := parts[0]
+		regionPart := parts[1] // e.g., "us-east-1.amazonaws.com" or "amazonaws.com"
+
+		region := ""
+		if strings.HasPrefix(regionPart, "amazonaws.com") {
+			region = "us-east-1" // Default region for legacy URLs
+		} else {
+			region = strings.TrimSuffix(regionPart, ".amazonaws.com")
+		}
+
+		key := strings.TrimPrefix(parsed.Path, "/")
+		return &s3Location{
+			Bucket: bucket,
+			Key:    key,
+			Region: region,
+		}
+	}
+
+	// Path style: s3.region.amazonaws.com/bucket/key or s3.amazonaws.com/bucket/key
+	if strings.HasPrefix(host, "s3.") || host == "s3.amazonaws.com" {
+		region := ""
+		if host == "s3.amazonaws.com" {
+			region = "us-east-1"
+		} else {
+			// s3.region.amazonaws.com
+			regionPart := strings.TrimPrefix(host, "s3.")
+			region = strings.TrimSuffix(regionPart, ".amazonaws.com")
+		}
+
+		// Path is /bucket/key
+		pathParts := strings.SplitN(strings.TrimPrefix(parsed.Path, "/"), "/", 2)
+		if len(pathParts) < 2 {
+			return nil
+		}
+
+		return &s3Location{
+			Bucket: pathParts[0],
+			Key:    pathParts[1],
+			Region: region,
+		}
+	}
+
+	return nil
+}
+
+// downloadFromS3 downloads an object from S3 using the AWS SDK.
+func downloadFromS3(ctx context.Context, loc *s3Location) (io.Reader, error) {
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(loc.Region))
+	if err != nil {
+		return nil, diagnosticError{
+			summary: "Failed to load AWS configuration",
+			detail:  fmt.Sprintf("Unable to load AWS SDK config: %v", err),
+		}
+	}
+
+	client := s3.NewFromConfig(cfg)
+
+	result, err := client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: &loc.Bucket,
+		Key:    &loc.Key,
+	})
+	if err != nil {
+		return nil, diagnosticError{
+			summary: fmt.Sprintf("Failed to download from S3 bucket %s", loc.Bucket),
+			detail:  fmt.Sprintf("GetObject failed for key %s: %v", loc.Key, err),
+		}
+	}
+
+	// Read the entire body into a buffer so we can close the response
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, result.Body); err != nil {
+		result.Body.Close()
+		return nil, diagnosticError{
+			summary: "Failed to read S3 object body",
+			detail:  fmt.Sprintf("Error reading response body: %v", err),
+		}
+	}
+	result.Body.Close()
+
+	return &buf, nil
 }
 
 // NOTE: Provider Parameterized by Architecture
@@ -100,8 +218,8 @@ func dataStileManifest() *schema.Resource {
 	}
 }
 
-func getBuildkiteArtifact(apiToken string, artifactName string, buildNumber string, pipeline string, org string) (io.Reader, error) {
-	config, err := buildkite.NewTokenConfig(apiToken, true)
+func getBuildkiteArtifact(ctx context.Context, apiToken string, artifactName string, buildNumber string, pipeline string, org string) (io.Reader, error) {
+	bkConfig, err := buildkite.NewTokenConfig(apiToken, true)
 
 	if err != nil {
 		log.Printf("client config failed: %s", err)
@@ -111,7 +229,7 @@ func getBuildkiteArtifact(apiToken string, artifactName string, buildNumber stri
 		}
 	}
 
-	client := buildkite.NewClient(config.Client())
+	client := buildkite.NewClient(bkConfig.Client())
 
 	// This is a pointer, so for ease of use we assign it with the default
 	// values for the structure. If we used the, the perhaps more
@@ -149,8 +267,24 @@ func getBuildkiteArtifact(apiToken string, artifactName string, buildNumber stri
 				}
 				fmt.Fprintf(os.Stdout, "%s\n", string(data))
 			} else if artifactName == *artifact.Filename || artifactName == *artifact.ID {
+				downloadURL := *artifact.DownloadURL
+
+				// Try to use S3 directly if the URL points to S3
+				if s3Loc := parseS3URL(downloadURL); s3Loc != nil {
+					log.Printf("Downloading artifact via S3 API from bucket %s", s3Loc.Bucket)
+					reader, err := downloadFromS3(ctx, s3Loc)
+					if err != nil {
+						log.Printf("S3 download failed, falling back to HTTP: %s", err)
+						// Fall through to HTTP download
+					} else {
+						return reader, nil
+					}
+				}
+
+				// Fall back to HTTP download via Buildkite API
+				log.Printf("Downloading artifact via HTTP from %s", downloadURL)
 				var buf bytes.Buffer
-				_, err := client.Artifacts.DownloadArtifactByURL(*artifact.DownloadURL, &buf)
+				_, err := client.Artifacts.DownloadArtifactByURL(downloadURL, &buf)
 				if err != nil {
 					log.Printf("DownloadArtifactByURL failed: %s", err)
 					return nil, diagnosticError{
@@ -218,7 +352,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 		// it will just appear that the provider is hanging and
 		// hanging and hanging...
 		for i := 0; i < 5; i++ {
-			artifact, err = getBuildkiteArtifact(apiToken, manifestName, bfpBuildNumber, pipeline, org)
+			artifact, err = getBuildkiteArtifact(ctx, apiToken, manifestName, bfpBuildNumber, pipeline, org)
 			if err == nil {
 				break
 			}
