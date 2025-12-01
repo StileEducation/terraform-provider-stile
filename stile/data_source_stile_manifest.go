@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -64,11 +65,11 @@ func parseS3URL(rawURL string) *s3Location {
 			return nil
 		}
 		bucket := parts[0]
-		regionPart := parts[1] // e.g., "us-east-1.amazonaws.com" or "amazonaws.com"
+		regionPart := parts[1] // e.g., "ap-southeast-2.amazonaws.com" or "amazonaws.com"
 
 		region := ""
 		if strings.HasPrefix(regionPart, "amazonaws.com") {
-			region = "us-east-1" // Default region for legacy URLs
+			region = "ap-southeast-2" // Default region for legacy URLs
 		} else {
 			region = strings.TrimSuffix(regionPart, ".amazonaws.com")
 		}
@@ -85,7 +86,7 @@ func parseS3URL(rawURL string) *s3Location {
 	if strings.HasPrefix(host, "s3.") || host == "s3.amazonaws.com" {
 		region := ""
 		if host == "s3.amazonaws.com" {
-			region = "us-east-1"
+			region = "ap-southeast-2"
 		} else {
 			// s3.region.amazonaws.com
 			regionPart := strings.TrimPrefix(host, "s3.")
@@ -118,7 +119,9 @@ func downloadFromS3(ctx context.Context, loc *s3Location) (io.Reader, error) {
 		}
 	}
 
-	client := s3.NewFromConfig(cfg)
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+	})
 
 	result, err := client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: &loc.Bucket,
@@ -143,6 +146,41 @@ func downloadFromS3(ctx context.Context, loc *s3Location) (io.Reader, error) {
 	result.Body.Close()
 
 	return &buf, nil
+}
+
+// resolveS3URLFromBuildkite fetches the Buildkite download URL without following
+// redirects to extract the S3 URL from the Location header.
+func resolveS3URLFromBuildkite(client *buildkite.Client, transport *buildkite.TokenAuthTransport, downloadURL string) (*s3Location, error) {
+	req, err := client.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a client that doesn't follow redirects
+	noRedirectClient := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: transport,
+	}
+
+	resp, err := noRedirectClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Check for redirect status codes (301, 302, 303, 307, 308)
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("expected redirect, got status %d", resp.StatusCode)
+	}
+
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return nil, fmt.Errorf("redirect response missing Location header")
+	}
+
+	return parseS3URL(location), nil
 }
 
 // NOTE: Provider Parameterized by Architecture
@@ -269,31 +307,27 @@ func getBuildkiteArtifact(ctx context.Context, apiToken string, artifactName str
 			} else if artifactName == *artifact.Filename || artifactName == *artifact.ID {
 				downloadURL := *artifact.DownloadURL
 
-				// Try to use S3 directly if the URL points to S3
-				if s3Loc := parseS3URL(downloadURL); s3Loc != nil {
-					log.Printf("Downloading artifact via S3 API from bucket %s", s3Loc.Bucket)
-					reader, err := downloadFromS3(ctx, s3Loc)
-					if err != nil {
-						log.Printf("S3 download failed, falling back to HTTP: %s", err)
-						// Fall through to HTTP download
-					} else {
-						return reader, nil
-					}
-				}
-
-				// Fall back to HTTP download via Buildkite API
-				log.Printf("Downloading artifact via HTTP from %s", downloadURL)
-				var buf bytes.Buffer
-				_, err := client.Artifacts.DownloadArtifactByURL(downloadURL, &buf)
+				// Resolve the S3 URL from Buildkite's redirect
+				s3Loc, err := resolveS3URLFromBuildkite(client, bkConfig, downloadURL)
 				if err != nil {
-					log.Printf("DownloadArtifactByURL failed: %s", err)
 					return nil, diagnosticError{
-						summary: fmt.Sprintf("Unable to download artifact at URL %s", err),
-						detail:  fmt.Sprintf("DownloadArtifactByURL failed: %s\nAre you on the VPN?", err),
+						summary: "Failed to resolve S3 URL from Buildkite",
+						detail:  fmt.Sprintf("Could not get redirect location from %s: %v", downloadURL, err),
+					}
+				}
+				if s3Loc == nil {
+					return nil, diagnosticError{
+						summary: "Buildkite redirect URL is not an S3 URL",
+						detail:  fmt.Sprintf("Expected an S3 URL in the redirect Location header from %s", downloadURL),
 					}
 				}
 
-				return &buf, nil
+				log.Printf("Downloading artifact via S3 API from %v", s3Loc)
+				reader, err := downloadFromS3(ctx, s3Loc)
+				if err != nil {
+					return nil, err
+				}
+				return reader, nil
 			}
 		}
 
@@ -356,7 +390,7 @@ func dataStileManifestRead(ctx context.Context, d *schema.ResourceData, m interf
 			if err == nil {
 				break
 			}
-			log.Printf("Getting manifest failed, trying again...")
+			log.Printf("Getting manifest failed (trying again): %v", err)
 			time.Sleep(5 * time.Second)
 		}
 
